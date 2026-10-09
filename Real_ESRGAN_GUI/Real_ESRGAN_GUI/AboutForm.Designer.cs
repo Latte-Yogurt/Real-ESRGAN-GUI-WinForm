@@ -82,7 +82,7 @@ namespace Real_ESRGAN_GUI
             this.LabelCopyRight.Name = "LabelCopyRight";
             this.LabelCopyRight.Size = new System.Drawing.Size(372, 53);
             this.LabelCopyRight.TabIndex = 3;
-            this.LabelCopyRight.Text = "Copyright© 2024-2025 LatteYogurt , All rights reserved.";
+            this.LabelCopyRight.Text = "Copyright© 2024 LatteYogurt , All rights reserved.";
             this.LabelCopyRight.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
             // 
             // LinkLabelGitHub

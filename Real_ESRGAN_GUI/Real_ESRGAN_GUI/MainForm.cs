@@ -7,10 +7,10 @@ using System.Reflection;
 using System.Xml.Linq;
 using System.Diagnostics;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using System.Threading.Tasks;
 using System.Xml;
-using System.Text;
 
 namespace Real_ESRGAN_GUI
 {
@@ -21,13 +21,14 @@ namespace Real_ESRGAN_GUI
         public static class Parameters
         {
             public readonly static string workPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            public readonly static string extractPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             public readonly static string xmlPath = Path.Combine(workPath, "Real_ESRGAN_GUI.xml");
             public readonly static string appConfigPath = Path.Combine(workPath, "Real_ESRGAN_GUI.exe.config");
-            public readonly static string realesrganFolderPath = Path.Combine(workPath, "Real_ESRGAN_GUI_Components");
+            public readonly static string realesrganFolderPath = Path.Combine(extractPath, "Real_ESRGAN_GUI_WinForm");
             public readonly static string realesrganPath = Path.Combine(realesrganFolderPath, "realesrgan.exe");
             public readonly static string vcomp140Path = Path.Combine(realesrganFolderPath, "vcomp140.dll");
             public readonly static string vcomp140dPath = Path.Combine(realesrganFolderPath, "vcomp140d.dll");
-            public readonly static string modelsPath= Path.Combine(realesrganFolderPath, "models");
+            public readonly static string modelsPath = Path.Combine(realesrganFolderPath, "models");
             public readonly static string realesr_animevideov3_x2_binPath = Path.Combine(modelsPath, "realesr-animevideov3-x2.bin");
             public readonly static string realesr_animevideov3_x2_paramPath = Path.Combine(modelsPath, "realesr-animevideov3-x2.param");
             public readonly static string realesr_animevideov3_x3_binPath = Path.Combine(modelsPath, "realesr-animevideov3-x3.bin");
@@ -59,14 +60,13 @@ namespace Real_ESRGAN_GUI
         {
             base.OnDpiChanged(e);
 
-            // 获取新的 DPI 缩放因子
             float newScale = e.DeviceDpiNew / 96.0f;
             Parameters.systemScale = newScale;
 
             INITIALIZE_MAINFORM_SIZE(newScale);
             UPDATE_MENUSTRIP_LAYOUT(MenuStrip, newScale);
 
-            // 强制重绘界面以适应新 DPI 下的字体和控件
+            // 通知系统重绘，更新字体和控件尺寸
             Invalidate();
             Update();
         }
@@ -127,51 +127,13 @@ namespace Real_ESRGAN_GUI
         {
             if (args.Length > 0)
             {
-                if (args.Length > 1)
-                {
-                    Parameters.isMultipleFiles = true;
-                }
+                Parameters.isMultipleFiles = args.Length > 1;
 
-                else
+                if (args.All(arg => !string.IsNullOrEmpty(arg)))
                 {
-                    Parameters.isMultipleFiles = false;
-                }
-            }
-
-            if (args != null && args.Length > 0 && args.All(arg => !string.IsNullOrEmpty(arg)))
-            {
-                if (!Parameters.isMultipleFiles)
-                {
-                    string filePath = args[0];
-                    string fileName = Path.GetFileNameWithoutExtension(filePath);
-                    string directoryPath = Path.GetDirectoryName(filePath);
-                    Parameters.filePath = filePath;
-                    Parameters.fileName = fileName;
-                    Parameters.directoryPath = directoryPath;
-
-                    if (!CHECK_REAL_ESRGAN_EXIST())
+                    if (!Parameters.isMultipleFiles)
                     {
-                        CREATE_COMPONENTS();
-                        if (!Parameters.isCreatedNewFolder)
-                        {
-                            ERROR_REAL_ESRGAN_EXIST();
-                            return;
-                        }
-                    }
-
-                    bool isLegalFile = CHECK_EXTENSION(filePath);
-
-                    if (isLegalFile)
-                    {
-                        GENERATE_COMMAND();
-                    }
-                }
-
-                else
-                {
-                    foreach (var singleFilePath in args)
-                    {
-                        string filePath = singleFilePath;
+                        string filePath = args[0];
                         string fileName = Path.GetFileNameWithoutExtension(filePath);
                         string directoryPath = Path.GetDirectoryName(filePath);
                         Parameters.filePath = filePath;
@@ -184,15 +146,40 @@ namespace Real_ESRGAN_GUI
                             if (!Parameters.isCreatedNewFolder)
                             {
                                 ERROR_REAL_ESRGAN_EXIST();
-                                break;
+                                return;
                             }
                         }
 
-                        bool isLegalFile = CHECK_EXTENSION(singleFilePath);
-
-                        if (isLegalFile)
+                        if (CHECK_EXTENSION(filePath))
                         {
                             GENERATE_COMMAND();
+                        }
+                    }
+                    else
+                    {
+                        foreach (var singleFilePath in args)
+                        {
+                            string filePath = singleFilePath;
+                            string fileName = Path.GetFileNameWithoutExtension(filePath);
+                            string directoryPath = Path.GetDirectoryName(filePath);
+                            Parameters.filePath = filePath;
+                            Parameters.fileName = fileName;
+                            Parameters.directoryPath = directoryPath;
+
+                            if (!CHECK_REAL_ESRGAN_EXIST())
+                            {
+                                CREATE_COMPONENTS();
+                                if (!Parameters.isCreatedNewFolder)
+                                {
+                                    ERROR_REAL_ESRGAN_EXIST();
+                                    break;
+                                }
+                            }
+
+                            if (CHECK_EXTENSION(singleFilePath))
+                            {
+                                GENERATE_COMMAND();
+                            }
                         }
                     }
                 }
@@ -201,43 +188,26 @@ namespace Real_ESRGAN_GUI
 
         private bool CHECK_PATH_READ_WRITE(string path, out Exception error)
         {
-            error = null; // 初始化异常为 null
-
+            error = null;
+            string checkFilePath = Path.Combine(path, "~testFile_" + Guid.NewGuid().ToString("N") + ".tmp");
             try
             {
-                // 检查可写性
-                string checkFilePath = Path.Combine(path, "Directory_checker");
-
-                // 尝试写入
-                using (FileStream testFile = File.Create(checkFilePath))
+                using (var fs = new FileStream(checkFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 {
-                    // 写入一些数据（随意）
-                    byte[] info = new UTF8Encoding(true).GetBytes("dir check");
-                    testFile.Write(info, 0, info.Length);
+                    fs.WriteByte(0);
                 }
-
-                // 尝试读取
-                using (FileStream testFile = File.OpenRead(checkFilePath))
+                using (var fs = new FileStream(checkFilePath, FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
-                    // 尝试读取数据
-                    byte[] buffer = new byte[1024];
-                    testFile.Read(buffer, 0, buffer.Length);
+                    fs.ReadByte();
                 }
-
-                // 删除测试文件
-                File.Delete(checkFilePath);
-
-                return true; // 两者都成功
+                return true;
             }
-            catch (UnauthorizedAccessException unauthorizedEx)
+            catch (UnauthorizedAccessException ex) { error = ex; return false; }
+            catch (Exception ex) { error = ex; return false; }
+            finally
             {
-                error = unauthorizedEx;
-                return false; // 不具备权限
-            }
-            catch (Exception otherEx)
-            {
-                error = otherEx;
-                return false; // 发生其他异常
+                try { if (File.Exists(checkFilePath)) File.Delete(checkFilePath); }
+                catch { /* 清理临时文件失败可忽略 */ }
             }
         }
 
@@ -278,12 +248,12 @@ namespace Real_ESRGAN_GUI
 
         private bool CHECK_REAL_ESRGAN_EXIST()
         {
-            return File.Exists(Parameters.realesrganPath) && File.Exists(Parameters.vcomp140Path) && File.Exists(Parameters.vcomp140dPath) 
-                && Directory.Exists(Parameters.modelsPath) && File.Exists(Parameters.realesr_animevideov3_x2_binPath) 
-                && File.Exists(Parameters.realesr_animevideov3_x2_paramPath) && File.Exists(Parameters.realesr_animevideov3_x3_binPath) 
-                && File.Exists(Parameters.realesr_animevideov3_x3_paramPath) && File.Exists(Parameters.realesr_animevideov3_x4_binPath) 
-                && File.Exists(Parameters.realesr_animevideov3_x4_paramPath) && File.Exists(Parameters.realesrgan_x4plus_binPath) 
-                && File.Exists(Parameters.realesrgan_x4plus_paramPath) && File.Exists(Parameters.realesrgan_x4plus_anime_binPath) 
+            return File.Exists(Parameters.appConfigPath) && File.Exists(Parameters.realesrganPath) && File.Exists(Parameters.vcomp140Path) && File.Exists(Parameters.vcomp140dPath)
+                && Directory.Exists(Parameters.modelsPath) && File.Exists(Parameters.realesr_animevideov3_x2_binPath)
+                && File.Exists(Parameters.realesr_animevideov3_x2_paramPath) && File.Exists(Parameters.realesr_animevideov3_x3_binPath)
+                && File.Exists(Parameters.realesr_animevideov3_x3_paramPath) && File.Exists(Parameters.realesr_animevideov3_x4_binPath)
+                && File.Exists(Parameters.realesr_animevideov3_x4_paramPath) && File.Exists(Parameters.realesrgan_x4plus_binPath)
+                && File.Exists(Parameters.realesrgan_x4plus_paramPath) && File.Exists(Parameters.realesrgan_x4plus_anime_binPath)
                 && File.Exists(Parameters.realesrgan_x4plus_anime_paramPath);
         }
 
@@ -313,18 +283,13 @@ namespace Real_ESRGAN_GUI
                     Directory.CreateDirectory(newFolderPath);
                     return true;
                 }
-
                 catch (Exception ex)
                 {
                     ERROR_CREATE_FOLDER_FAILED(ex);
                     return false;
                 }
             }
-
-            else
-            {
-                return true;
-            }
+            return true;
         }
 
         private void CREATE_COMPONENTS()
@@ -429,7 +394,7 @@ namespace Real_ESRGAN_GUI
         private void CREATE_REAL_ESRGAN_EXE()
         {
             string resourceName = "Real_ESRGAN_GUI.Resource.realesrgan.exe";
-            string outputFileName = resourceName.Replace("Real_ESRGAN_GUI.Resource.", "");//将原始嵌入资源的文件名中的命名空间前缀替换为空字符串
+            string outputFileName = resourceName.Replace("Real_ESRGAN_GUI.Resource.", "");
             string outputPath = Path.Combine(Parameters.realesrganFolderPath, outputFileName);
             EXTRACT_RESOURCE(resourceName, outputPath);
         }
@@ -537,7 +502,6 @@ namespace Real_ESRGAN_GUI
             {
                 dpi = g.DpiX;
             }
-
             return dpi / 96.0f;
         }
 
@@ -545,17 +509,14 @@ namespace Real_ESRGAN_GUI
         {
             if (!string.IsNullOrEmpty(filePath))
             {
-                // 检查文件扩展名
                 string[] allowedExtensions = { ".jpg", ".jpeg", ".png", ".webp" };
                 if (!allowedExtensions.Contains(Path.GetExtension(filePath).ToLower()))
                 {
                     ERROR_UNSUPPORTED_FILE();
                     return false;
                 }
-
                 return true;
             }
-
             return false;
         }
 
@@ -563,13 +524,16 @@ namespace Real_ESRGAN_GUI
         {
             string nowTime = DateTime.Now.ToString("HH-mm-ss");
 
-            string command = $"-i \"{Parameters.filePath}\" -o \"{Parameters.directoryPath}\\{Parameters.fileName}_x{Parameters.scale}_{nowTime}.{Parameters.extension}\" -n {Parameters.model} -s {Parameters.scale}";
+            // 剥离文件名末尾原有的时间戳（如 _12-45-10），防止重复处理时后缀不断累加
+            string baseName = Regex.Replace(Parameters.fileName, @"_\d{2}-\d{2}-\d{2}$", "");
+            string outputFileName = $"{baseName}_x{Parameters.scale}_{nowTime}.{Parameters.extension}";
+
+            string command = $"-i \"{Parameters.filePath}\" -o \"{Parameters.directoryPath}\\{outputFileName}\" -n {Parameters.model} -s {Parameters.scale}";
 
             if (CheckBoxHideProcess.Checked)
             {
                 EXECUTE_COMMAND_HIDDEN(command);
             }
-
             else
             {
                 EXECUTE_COMMAND_UNHIDDEN(command);
@@ -578,27 +542,23 @@ namespace Real_ESRGAN_GUI
 
         private void EXECUTE_COMMAND_UNHIDDEN(string command)
         {
-            // 创建进程
             var process = new Process();
             process.StartInfo.FileName = $"\"{Parameters.realesrganPath}\"";
             process.StartInfo.Arguments = command;
-            process.StartInfo.UseShellExecute = false; // 不使用操作系统外壳启动
+            process.StartInfo.UseShellExecute = false;
             process.StartInfo.CreateNoWindow = false; // 显示命令行窗口
 
-            // 启动进程
             process.Start();
         }
 
         private void EXECUTE_COMMAND_HIDDEN(string command)
         {
-            // 创建进程
             var process = new Process();
             process.StartInfo.FileName = $"\"{Parameters.realesrganPath}\"";
             process.StartInfo.Arguments = command;
-            process.StartInfo.UseShellExecute = false; // 不使用操作系统外壳启动
-            process.StartInfo.CreateNoWindow = true; // 不显示命令行窗口
+            process.StartInfo.UseShellExecute = false;
+            process.StartInfo.CreateNoWindow = true; // 隐藏命令行窗口
 
-            // 启动进程
             process.Start();
         }
 
@@ -677,7 +637,6 @@ namespace Real_ESRGAN_GUI
                 {
                     File.WriteAllText(configFilePath, string.Empty);
                 }
-
                 catch (Exception ex)
                 {
                     ERROR_EXCEPTION_MESSAGE(ex);
@@ -688,16 +647,13 @@ namespace Real_ESRGAN_GUI
             int newLocationX = Screen.FromControl(this).Bounds.Width / 2 - Width / 2;
             int newLocationY = Screen.FromControl(this).Bounds.Height / 2 - Height / 2;
 
-            // 获取当前系统的显示语言
             var currentCulture = CultureInfo.CurrentUICulture;
 
-            // 创建一个示例词典，包含支持的语言
             var supportedLanguages = new HashSet<string>
             {
-                "zh-CN", // 中文 (简体)
-                "zh-TW", // 中文 (繁体)
-                "en-US", // 英语 (美国)
-                // 其他语言...
+                "zh-CN",
+                "zh-TW",
+                "en-US"
             };
 
             XElement defaultConfig;
@@ -716,7 +672,6 @@ namespace Real_ESRGAN_GUI
                         new XElement("ProcessHidden", "false")
                     );
                 }
-
                 else
                 {
                     defaultConfig = new XElement("Configuration",
@@ -730,7 +685,6 @@ namespace Real_ESRGAN_GUI
                     );
                 }
             }
-
             else
             {
                 defaultConfig = new XElement("Configuration",
@@ -758,22 +712,20 @@ namespace Real_ESRGAN_GUI
         {
             try
             {
-                XDocument xdoc = XDocument.Load(filePath); // 加载 XML 文件
+                XDocument xdoc = XDocument.Load(filePath);
 
-                var element = xdoc.Descendants(key).FirstOrDefault(); // 查找指定节点
+                var element = xdoc.Descendants(key).FirstOrDefault();
                 if (element != null)
                 {
-                    element.Value = newValue; // 修改节点值
+                    element.Value = newValue;
                 }
                 else
                 {
-                    // 创建新节点并设置值
                     xdoc.Root.Add(new XElement(key, newValue));
                 }
 
-                xdoc.Save(filePath); // 保存文件
+                xdoc.Save(filePath);
             }
-
             catch (Exception)
             {
                 CREATE_DEFAULT_CONFIG(Parameters.xmlPath);
@@ -782,114 +734,64 @@ namespace Real_ESRGAN_GUI
 
         private string GET_CURRENT_LANGUAGE(string configFilePath)
         {
-            // 检查文件是否存在
             if (!File.Exists(configFilePath))
             {
-                // 如果不存在，创建默认配置文件
                 CREATE_DEFAULT_CONFIG(configFilePath);
             }
 
-            // 获取当前系统的显示语言
             var currentCulture = CultureInfo.CurrentUICulture;
 
-            // 创建一个示例词典，包含支持的语言
             var supportedLanguages = new HashSet<string>
-                {
-                    "zh-CN", // 中文 (简体)
-                    "zh-TW", // 中文 (繁体)
-                    "en-US", // 英语 (美国)
-                    // 其他语言...
-                };
+            {
+                "zh-CN",
+                "zh-TW",
+                "en-US"
+            };
 
             XDocument xdoc;
 
             try
             {
-                // 加载 XML 文档
                 xdoc = XDocument.Load(configFilePath);
             }
-
             catch (XmlException)
             {
-                // 如果加载失败，创建新的默认配置文件并返回默认值
                 CREATE_DEFAULT_CONFIG(configFilePath);
-
-                if (supportedLanguages.Contains(currentCulture.Name))
-                {
-                    return currentCulture.Name;
-                }
-
-                else
-                {
-                    return "en-US";
-                }
+                return supportedLanguages.Contains(currentCulture.Name) ? currentCulture.Name : "en-US";
             }
 
-            // 检查 Language 节点是否存在
             var languageNode = xdoc.Descendants("Language").FirstOrDefault();
 
             if (languageNode == null)
             {
-                // 检查当前语言是否在词典中
                 if (supportedLanguages.Contains(currentCulture.Name))
                 {
-                    // 如果没有找到 Language 节点，创建新的 XML 节点
                     XElement newNode = new XElement("Language", $"{currentCulture.Name}");
-
-                    // 将新节点添加到根节点
                     xdoc.Root.Add(newNode);
-
-                    // 保存更改
                     xdoc.Save(configFilePath);
-
                     return currentCulture.Name;
                 }
-
                 else
                 {
                     XElement newNode = new XElement("Language", "en-US");
-
                     xdoc.Root.Add(newNode);
-
                     xdoc.Save(configFilePath);
-
                     return "en-US";
                 }
             }
 
-            // 获取 Language 节点的值
             var language = languageNode.Value;
 
-            // 如果获取到的值为空字符串
             if (string.IsNullOrEmpty(language))
             {
-                // 检查当前语言是否在词典中
-                if (supportedLanguages.Contains(currentCulture.Name))
-                {
-                    return currentCulture.Name;
-                }
-
-                else
-                {
-                    return "en-US";
-                }
+                return supportedLanguages.Contains(currentCulture.Name) ? currentCulture.Name : "en-US";
             }
 
-            // 检查语言是否在支持语言词典中
             if (!supportedLanguages.Contains(language))
             {
-                // 如果在，返回当前的系统显示语言（如果在支持列表中）
-                if (supportedLanguages.Contains(currentCulture.Name))
-                {
-                    return currentCulture.Name;
-                }
-                else
-                {
-                    return "en-US"; // 默认语言
-                }
+                return supportedLanguages.Contains(currentCulture.Name) ? currentCulture.Name : "en-US";
             }
 
-            // 返回获取到的值
             return language;
         }
 
@@ -906,15 +808,11 @@ namespace Real_ESRGAN_GUI
 
             try
             {
-                // 加载 XML 文档
                 xdoc = XDocument.Load(configFilePath);
             }
-
             catch (XmlException)
             {
-                // 如果加载失败，创建新的默认配置文件并返回默认值
                 CREATE_DEFAULT_CONFIG(configFilePath);
-
                 return 0;
             }
 
@@ -922,33 +820,18 @@ namespace Real_ESRGAN_GUI
 
             if (widthNode == null)
             {
-
                 XElement newNode = new XElement("ScreenWidth", newWidth);
-
                 xdoc.Root.Add(newNode);
-
                 xdoc.Save(configFilePath);
-
                 return 0;
             }
 
             var width = widthNode.Value;
             int widthToInt;
 
-            if (string.IsNullOrEmpty(width))
-            {
-                return 0;
-            }
-
-            if (!int.TryParse(width, out widthToInt))
-            {
-                return 0;
-            }
-
-            if (widthToInt <= 0)
-            {
-                return 0;
-            }
+            if (string.IsNullOrEmpty(width)) return 0;
+            if (!int.TryParse(width, out widthToInt)) return 0;
+            if (widthToInt <= 0) return 0;
 
             if (widthToInt == Screen.FromControl(this).Bounds.Width)
             {
@@ -971,15 +854,11 @@ namespace Real_ESRGAN_GUI
 
             try
             {
-                // 加载 XML 文档
                 xdoc = XDocument.Load(configFilePath);
             }
-
             catch (XmlException)
             {
-                // 如果加载失败，创建新的默认配置文件并返回默认值
                 CREATE_DEFAULT_CONFIG(configFilePath);
-
                 return 0;
             }
 
@@ -987,33 +866,18 @@ namespace Real_ESRGAN_GUI
 
             if (heightNode == null)
             {
-
                 XElement newNode = new XElement("ScreenHeight", newHeight);
-
                 xdoc.Root.Add(newNode);
-
                 xdoc.Save(configFilePath);
-
                 return 0;
             }
 
             var height = heightNode.Value;
             int heightToInt;
 
-            if (string.IsNullOrEmpty(height))
-            {
-                return 0;
-            }
-
-            if (!int.TryParse(height, out heightToInt))
-            {
-                return 0;
-            }
-
-            if (heightToInt <= 0)
-            {
-                return 0;
-            }
+            if (string.IsNullOrEmpty(height)) return 0;
+            if (!int.TryParse(height, out heightToInt)) return 0;
+            if (heightToInt <= 0) return 0;
 
             if (heightToInt == Screen.FromControl(this).Bounds.Height)
             {
@@ -1034,15 +898,11 @@ namespace Real_ESRGAN_GUI
 
             try
             {
-                // 加载 XML 文档
                 xdoc = XDocument.Load(configFilePath);
             }
-
             catch (XmlException)
             {
-                // 如果加载失败，创建新的默认配置文件并返回默认值
                 CREATE_DEFAULT_CONFIG(configFilePath);
-
                 return 0;
             }
 
@@ -1050,33 +910,18 @@ namespace Real_ESRGAN_GUI
 
             if (scaleNode == null)
             {
-
                 XElement newNode = new XElement("SystemScale", Parameters.systemScale);
-
                 xdoc.Root.Add(newNode);
-
                 xdoc.Save(configFilePath);
-
                 return 0;
             }
 
             var scale = scaleNode.Value;
             float scaleToFloat;
 
-            if (string.IsNullOrEmpty(scale))
-            {
-                return 0;
-            }
-
-            if (!float.TryParse(scale, out scaleToFloat))
-            {
-                return 0;
-            }
-
-            if (scaleToFloat <= 0)
-            {
-                return 0;
-            }
+            if (string.IsNullOrEmpty(scale)) return 0;
+            if (!float.TryParse(scale, out scaleToFloat)) return 0;
+            if (scaleToFloat <= 0) return 0;
 
             if ((int)scaleToFloat == (int)Parameters.systemScale)
             {
@@ -1099,15 +944,11 @@ namespace Real_ESRGAN_GUI
 
             try
             {
-                // 加载 XML 文档
                 xdoc = XDocument.Load(configFilePath);
             }
-
             catch (XmlException)
             {
-                // 如果加载失败，创建新的默认配置文件并返回默认值
                 CREATE_DEFAULT_CONFIG(configFilePath);
-
                 return newLocationX;
             }
 
@@ -1115,28 +956,17 @@ namespace Real_ESRGAN_GUI
 
             if (locationXNode == null)
             {
-
                 XElement newNode = new XElement("LocationX", newLocationX);
-
                 xdoc.Root.Add(newNode);
-
                 xdoc.Save(configFilePath);
-
                 return newLocationX;
             }
 
             var locationX = locationXNode.Value;
             int locationXToInt;
 
-            if (string.IsNullOrEmpty(locationX))
-            {
-                return newLocationX;
-            }
-
-            if (!int.TryParse(locationX, out locationXToInt))
-            {
-                return newLocationX;
-            }
+            if (string.IsNullOrEmpty(locationX)) return newLocationX;
+            if (!int.TryParse(locationX, out locationXToInt)) return newLocationX;
 
             if (locationXToInt > Screen.FromControl(this).Bounds.Width - Size.Width || locationXToInt < -10)
             {
@@ -1159,15 +989,11 @@ namespace Real_ESRGAN_GUI
 
             try
             {
-                // 加载 XML 文档
                 xdoc = XDocument.Load(configFilePath);
             }
-
             catch (XmlException)
             {
-                // 如果加载失败，创建新的默认配置文件并返回默认值
                 CREATE_DEFAULT_CONFIG(configFilePath);
-
                 return newLocationY;
             }
 
@@ -1176,26 +1002,16 @@ namespace Real_ESRGAN_GUI
             if (locationYNode == null)
             {
                 XElement newNode = new XElement("LocationY", newLocationY);
-
                 xdoc.Root.Add(newNode);
-
                 xdoc.Save(configFilePath);
-
                 return newLocationY;
             }
 
             var locationY = locationYNode.Value;
             int locationYToInt;
 
-            if (string.IsNullOrEmpty(locationY))
-            {
-                return newLocationY;
-            }
-
-            if (!int.TryParse(locationY, out locationYToInt))
-            {
-                return newLocationY;
-            }
+            if (string.IsNullOrEmpty(locationY)) return newLocationY;
+            if (!int.TryParse(locationY, out locationYToInt)) return newLocationY;
 
             if (locationYToInt > Screen.FromControl(this).Bounds.Height - Size.Height || locationYToInt < 0)
             {
@@ -1216,49 +1032,30 @@ namespace Real_ESRGAN_GUI
 
             try
             {
-                // 加载 XML 文档
                 xdoc = XDocument.Load(configFilePath);
             }
-
             catch (XmlException)
             {
-                // 如果加载失败，创建新的默认配置文件并返回默认值
                 CREATE_DEFAULT_CONFIG(configFilePath);
-
                 return "4";
             }
 
             var scaleNode = xdoc.Descendants("Scale").FirstOrDefault();
 
-            var supportedScale = new HashSet<string>
-            {
-                "2",
-                "3",
-                "4"
-            };
+            var supportedScale = new HashSet<string> { "2", "3", "4" };
 
             if (scaleNode == null)
             {
                 XElement newNode = new XElement("Scale", "4");
-
                 xdoc.Root.Add(newNode);
-
                 xdoc.Save(configFilePath);
-
                 return "4";
             }
 
             var scale = scaleNode.Value;
 
-            if (string.IsNullOrEmpty(scale))
-            {
-                return "4";
-            }
-
-            if (!supportedScale.Contains(scale))
-            {
-                return "4";
-            }
+            if (string.IsNullOrEmpty(scale)) return "4";
+            if (!supportedScale.Contains(scale)) return "4";
 
             return scale;
         }
@@ -1274,15 +1071,11 @@ namespace Real_ESRGAN_GUI
 
             try
             {
-                // 加载 XML 文档
                 xdoc = XDocument.Load(configFilePath);
             }
-
             catch (XmlException)
             {
-                // 如果加载失败，创建新的默认配置文件并返回默认值
                 CREATE_DEFAULT_CONFIG(configFilePath);
-
                 return "realesrgan-x4plus";
             }
 
@@ -1298,25 +1091,15 @@ namespace Real_ESRGAN_GUI
             if (modelNode == null)
             {
                 XElement newNode = new XElement("Model", "realesrgan-x4plus");
-
                 xdoc.Root.Add(newNode);
-
                 xdoc.Save(configFilePath);
-
                 return "realesrgan-x4plus";
             }
 
             var model = modelNode.Value;
 
-            if (string.IsNullOrEmpty(model))
-            {
-                return "realesrgan-x4plus";
-            }
-
-            if (!supportedModel.Contains(model))
-            {
-                return "realesrgan-x4plus";
-            }
+            if (string.IsNullOrEmpty(model)) return "realesrgan-x4plus";
+            if (!supportedModel.Contains(model)) return "realesrgan-x4plus";
 
             return model;
         }
@@ -1332,49 +1115,30 @@ namespace Real_ESRGAN_GUI
 
             try
             {
-                // 加载 XML 文档
                 xdoc = XDocument.Load(configFilePath);
             }
-
             catch (XmlException)
             {
-                // 如果加载失败，创建新的默认配置文件并返回默认值
                 CREATE_DEFAULT_CONFIG(configFilePath);
-
                 return "png";
             }
 
             var extensionNode = xdoc.Descendants("Extension").FirstOrDefault();
 
-            var supportedExtension = new HashSet<string>
-            {
-                "jpg",
-                "png",
-                "webp"
-            };
+            var supportedExtension = new HashSet<string> { "jpg", "png", "webp" };
 
             if (extensionNode == null)
             {
                 XElement newNode = new XElement("Extension", "png");
-
                 xdoc.Root.Add(newNode);
-
                 xdoc.Save(configFilePath);
-
                 return "png";
             }
 
             var extension = extensionNode.Value;
 
-            if (string.IsNullOrEmpty(extension))
-            {
-                return "png";
-            }
-
-            if (!supportedExtension.Contains(extension))
-            {
-                return "png";
-            }
+            if (string.IsNullOrEmpty(extension)) return "png";
+            if (!supportedExtension.Contains(extension)) return "png";
 
             return extension;
         }
@@ -1390,55 +1154,32 @@ namespace Real_ESRGAN_GUI
 
             try
             {
-                // 加载 XML 文档
                 xdoc = XDocument.Load(configFilePath);
             }
-
             catch (XmlException)
             {
-                // 如果加载失败，创建新的默认配置文件并返回默认值
                 CREATE_DEFAULT_CONFIG(configFilePath);
-
                 return false;
             }
 
             var processHiddenNode = xdoc.Descendants("ProcessHidden").FirstOrDefault();
 
-            var supportedProcessHidden = new HashSet<string>
-            {
-                "True",
-                "False"
-            };
-
+            var supportedProcessHidden = new HashSet<string> { "True", "False" };
 
             if (processHiddenNode == null)
             {
                 XElement newNode = new XElement("ProcessHidden", "false");
-
                 xdoc.Root.Add(newNode);
-
                 xdoc.Save(configFilePath);
-
                 return false;
             }
 
             var processHidden = processHiddenNode.Value;
             bool processHiddenToBool;
 
-            if (string.IsNullOrEmpty(processHidden))
-            {
-                return false;
-            }
-
-            if (!supportedProcessHidden.Contains(processHidden))
-            {
-                return false;
-            }
-
-            if (!bool.TryParse(processHidden, out processHiddenToBool))
-            {
-                return false;
-            }
+            if (string.IsNullOrEmpty(processHidden)) return false;
+            if (!supportedProcessHidden.Contains(processHidden)) return false;
+            if (!bool.TryParse(processHidden, out processHiddenToBool)) return false;
 
             return processHiddenToBool;
         }
@@ -1447,28 +1188,24 @@ namespace Real_ESRGAN_GUI
         {
             ComboBoxScale.Items.Clear();
 
-            bool scaleAssigned = false; // 用于跟踪是否已分配scale
+            bool scaleAssigned = false;
 
             if (Parameters.model == "realesr-animevideov3")
             {
-                // 添加Scale的选项菜单
                 ComboBoxScale.Items.Add("2");
                 ComboBoxScale.Items.Add("3");
                 ComboBoxScale.Items.Add("4");
 
-                // 定义Scale的默认显示选项菜单
                 if (Parameters.scale == "2")
                 {
                     ComboBoxScale.SelectedIndex = 0;
                     scaleAssigned = true;
                 }
-
                 if (Parameters.scale == "3")
                 {
                     ComboBoxScale.SelectedIndex = 1;
                     scaleAssigned = true;
                 }
-
                 if (Parameters.scale == "4")
                 {
                     ComboBoxScale.SelectedIndex = 2;
@@ -1486,32 +1223,28 @@ namespace Real_ESRGAN_GUI
                 }
             }
 
-            // 在条件不满足时将scale强制赋值为"4"
+            // 如果当前缩放比例与模型不兼容，强制重置为4
             if (!scaleAssigned)
             {
-                Parameters.scale = "4"; // 强制赋值
-                ComboBoxScale.SelectedIndex = 0; // 设置为默认选择
+                Parameters.scale = "4";
+                ComboBoxScale.SelectedIndex = 0;
             }
         }
 
         private void DEFAULT_MODEL_MENU()
         {
-            // 添加Model的选项菜单
             ComboBoxModel.Items.Add("realesrgan-x4plus");
             ComboBoxModel.Items.Add("realesrgan-x4plus-anime");
             ComboBoxModel.Items.Add("realesr-animevideov3");
 
-            // 定义Model的默认显示选项菜单
             if (Parameters.model == "realesrgan-x4plus")
             {
                 ComboBoxModel.SelectedIndex = 0;
             }
-
             if (Parameters.model == "realesrgan-x4plus-anime")
             {
                 ComboBoxModel.SelectedIndex = 1;
             }
-
             if (Parameters.model == "realesr-animevideov3")
             {
                 ComboBoxModel.SelectedIndex = 2;
@@ -1520,22 +1253,18 @@ namespace Real_ESRGAN_GUI
 
         private void DEFAULT_EXTENSION_MENU()
         {
-            // 添加Extension的选项菜单
             ComboBoxExtension.Items.Add("jpg");
             ComboBoxExtension.Items.Add("png");
             ComboBoxExtension.Items.Add("webp");
 
-            // 定义Extension的默认显示选项菜单
             if (Parameters.extension == "jpg")
             {
                 ComboBoxExtension.SelectedIndex = 0;
             }
-
             if (Parameters.extension == "png")
             {
                 ComboBoxExtension.SelectedIndex = 1;
             }
-
             if (Parameters.extension == "webp")
             {
                 ComboBoxExtension.SelectedIndex = 2;
@@ -1544,16 +1273,7 @@ namespace Real_ESRGAN_GUI
 
         private void DEFAULT_PROCESS_HIDDEN()
         {
-            // 定义后台运行的默认显示状态
-            if (!Parameters.processHidden)
-            {
-                CheckBoxHideProcess.Checked = false;
-            }
-
-            else
-            {
-                CheckBoxHideProcess.Checked = true;
-            }
+            CheckBoxHideProcess.Checked = Parameters.processHidden;
         }
 
         private void NOTICE_CONFIG_SAVED()
@@ -1592,13 +1312,11 @@ namespace Real_ESRGAN_GUI
         {
             var currentCulture = CultureInfo.CurrentUICulture;
 
-            // 创建一个示例词典，包含支持的语言
             var supportedLanguages = new HashSet<string>
             {
-                "zh-CN", // 中文 (简体)
-                "zh-TW", // 中文 (繁体)
-                "en-US", // 英语 (美国)
-                // 其他语言...
+                "zh-CN",
+                "zh-TW",
+                "en-US"
             };
 
             if (supportedLanguages.Contains(currentCulture.Name))
@@ -1618,7 +1336,6 @@ namespace Real_ESRGAN_GUI
                         break;
                 }
             }
-
             else
             {
                 MessageBox.Show($"Permission denied to run the application in {directoryPath},error message is: {error.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -1700,7 +1417,6 @@ namespace Real_ESRGAN_GUI
 
         private void INITIALIZE_MAINFORM_SIZE(float scale)
         {
-            // 设置自动缩放模式
             AutoScaleMode = AutoScaleMode.Dpi;
 
             MinimumSize = new Size(0, 0);
@@ -1725,10 +1441,8 @@ namespace Real_ESRGAN_GUI
 
         private void INITIALIZE_TABLE_LAYOUT_PANEL_PIXEL(float scale)
         {
-            // tableLayoutPanel的索引从0开始，即第一行或列的索引号为0
-            // tableLayoutPanel的cell指定为先列后行，例如cell=0,1即为第一列第二行
+            // TableLayoutPanel 布局设置，索引均从0开始（先列后行）
 
-            // 对列的定义
             SET_COLUMN_SIZE(tableLayoutPanel, 0, SizeType.Absolute, 10f);
             SET_COLUMN_SIZE(tableLayoutPanel, 1, SizeType.Absolute, 70f * scale);
             SET_COLUMN_SIZE(tableLayoutPanel, 2, SizeType.Percent, 35f);
@@ -1738,7 +1452,6 @@ namespace Real_ESRGAN_GUI
             SET_COLUMN_SIZE(tableLayoutPanel, 6, SizeType.Percent, 3f);
             SET_COLUMN_SIZE(tableLayoutPanel, 7, SizeType.Absolute, 10f);
 
-            // 对行的定义
             SET_ROW_SIZE(tableLayoutPanel, 0, SizeType.Percent, 16f);
             SET_ROW_SIZE(tableLayoutPanel, 1, SizeType.Absolute, 20f);
             SET_ROW_SIZE(tableLayoutPanel, 2, SizeType.Percent, 22f);
@@ -1776,7 +1489,7 @@ namespace Real_ESRGAN_GUI
             SET_FONT_SIZE(ButtonConfig, Font.Size);
         }
 
-        private void SET_FONT_SIZE(Control obj, float fontSize)// 使用dynamic或Control绕过编译时的类型检查，直到运行时才解析
+        private void SET_FONT_SIZE(Control obj, float fontSize)
         {
             obj.Font = new Font(obj.Font.FontFamily, fontSize, obj.Font.Style, GraphicsUnit.Point);
         }
@@ -1805,7 +1518,6 @@ namespace Real_ESRGAN_GUI
 
                 foreach (ToolStripItem subItem in menuItem.DropDownItems)
                 {
-                    // 递归调用自身
                     UPDATE_TOOL_STRIP_ITEM(subItem);
                 }
             }
@@ -1820,69 +1532,52 @@ namespace Real_ESRGAN_GUI
             {
                 locationX = GET_LOCATION_X(Parameters.xmlPath);
                 locationY = GET_LOCATION_Y(Parameters.xmlPath);
-
-                Location = new Point(locationX, locationY);
             }
-
             else
             {
                 locationX = Screen.FromControl(this).Bounds.Width / 2 - Size.Width / 2;
                 locationY = Screen.FromControl(this).Bounds.Height / 2 - Size.Height / 2;
-
-                Location = new Point(locationX, locationY);
             }
 
+            Location = new Point(locationX, locationY);
             INITIALIZE_MAINFORM_SIZE(Parameters.systemScale);
         }
 
         private void MAINFORM_DRAGENTER(object sender, DragEventArgs e)
         {
-            // 检查拖拽的内容是否为文件
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
             {
-                // 获取拖拽的文件路径
                 string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
-                bool isValidFile = true; // 默认认为文件格式是有效的
+                bool isValidFile = true;
 
-                // 检查每个文件的扩展名
                 foreach (string file in files)
                 {
-                    string extension = System.IO.Path.GetExtension(file).ToLower();
-                    if (extension != ".jpg" && extension != ".jpeg" && extension != ".png" && extension != ".webp") 
+                    string extension = Path.GetExtension(file).ToLower();
+                    if (extension != ".jpg" && extension != ".jpeg" && extension != ".png" && extension != ".webp")
                     {
                         isValidFile = false;
-                        break; // 如果有一个文件不符合格式，退出循环
+                        break;
                     }
                 }
 
-                // 根据文件格式设置拖拽效果
-                if (isValidFile)
-                {
-                    e.Effect = DragDropEffects.Copy; // 设置拖拽效果
-                }
-                else
-                {
-                    e.Effect = DragDropEffects.None; // 不允许拖拽
-                }
+                e.Effect = isValidFile ? DragDropEffects.Copy : DragDropEffects.None;
             }
             else
             {
-                e.Effect = DragDropEffects.None; // 不允许拖拽
+                e.Effect = DragDropEffects.None;
             }
-            // 恢复鼠标指针到正常状态
-            Cursor.Current = Cursors.Default; // 设置鼠标指针为默认状态
+            Cursor.Current = Cursors.Default;
         }
 
         private async void MAINFORM_DRAGDROP(object sender, DragEventArgs e)
         {
-            // 获取拖拽的文件路径
             string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
             await Task.Run(() => MAIN_TASK(files));
         }
 
         private void MAINFORM_DRAGOVER(object sender, DragEventArgs e)
         {
-            MAINFORM_DRAGENTER(sender, e); // 复用已有的逻辑
+            MAINFORM_DRAGENTER(sender, e);
         }
 
         private void BUTTON_CONFIG_CLICK(object sender, EventArgs e)
@@ -1894,55 +1589,36 @@ namespace Real_ESRGAN_GUI
 
         private void CHECKBOX_HIDE_PROCESS_CHECKED_CHANGED(object sender, EventArgs e)
         {
-            bool isProcessHidden = CheckBoxHideProcess.Checked;
-            if (isProcessHidden)
-            {
-                Parameters.processHidden = true;
-            }
-
-            else
-            {
-                Parameters.processHidden = false;
-            }
+            Parameters.processHidden = CheckBoxHideProcess.Checked;
         }
 
         private void COMBOBOX_SCALE_SELECTED_INDEX_CHANGNED(object sender, EventArgs e)
         {
-            string selectedScale = ComboBoxScale.SelectedItem.ToString();
-            Parameters.scale = selectedScale;
+            Parameters.scale = ComboBoxScale.SelectedItem.ToString();
         }
 
         private void COMBOBOX_MODEL_SELECTED_INDEX_CHANGED(object sender, EventArgs e)
         {
-            string selectedModel = ComboBoxModel.SelectedItem.ToString();
-            Parameters.model = selectedModel;
+            Parameters.model = ComboBoxModel.SelectedItem.ToString();
             DEFAULT_SCALE_MENU();
         }
 
         private void COMBOBOX_EXTENSION_SELECTED_INDEX_CHANGED(object sender, EventArgs e)
         {
-            string selectedExtension = ComboBoxExtension.SelectedItem.ToString();
-            Parameters.extension = selectedExtension;
+            Parameters.extension = ComboBoxExtension.SelectedItem.ToString();
         }
 
         private async void MAINMENU_OPENFILES_CLICK(object sender, EventArgs e)
         {
-            // 创建 OpenFileDialog 实例
             OpenFileDialog openFileDialog = new OpenFileDialog();
-
-            // 设置过滤器以仅显示特定类型的文件，例如文本文件
             openFileDialog.Filter = "JPG文件 (*.jpg)|*.jpg|JPEG文件 (*.jpeg)|*.jpeg|PNG文件 (*.png)|*.png|WEBP文件 (*.webp)|*.webp";
 
-            // 显示对话框并检查用户是否选择了文件
             if (openFileDialog.ShowDialog() == DialogResult.OK)
             {
-                // 获取选中文件的完整路径
                 string filePath = openFileDialog.FileName;
-                string fileName = Path.GetFileNameWithoutExtension(filePath);
-                string directoryPath = Path.GetDirectoryName(filePath);
                 Parameters.filePath = filePath;
-                Parameters.fileName = fileName;
-                Parameters.directoryPath = directoryPath;
+                Parameters.fileName = Path.GetFileNameWithoutExtension(filePath);
+                Parameters.directoryPath = Path.GetDirectoryName(filePath);
 
                 if (!CHECK_REAL_ESRGAN_EXIST())
                 {
@@ -1991,7 +1667,7 @@ namespace Real_ESRGAN_GUI
             aboutForm.ShowDialog();
         }
 
-        private void MAINFORM_FORM_CLOSING(object sender,FormClosingEventArgs e)
+        private void MAINFORM_FORM_CLOSING(object sender, FormClosingEventArgs e)
         {
             SAVE_LOCATION();
         }
